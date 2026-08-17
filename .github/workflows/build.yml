@@ -17,60 +17,75 @@ jobs:
         with:
           node-version: 18
 
-      - name: Prepare Web Assets
+      - name: Setup Web Source Code
         run: |
           mkdir -p www
-          # Copy các file web vào thư mục www
+          # 1. Nếu repo đã có file thì dùng file trong repo
           if [ -f "index.html" ]; then
-            cp -r index.html style.css app.js sw.js manifest.json icon*.png www/ 2>/dev/null || cp -r * www/ 2>/dev/null || true
+            cp -r * www/ 2>/dev/null || true
+          fi
+          
+          # 2. Nếu repo chưa có file, tự động tải gói mã nguồn đầy đủ
+          if [ ! -f "www/index.html" ]; then
+            python3 -c "import urllib.request, zipfile; urllib.request.urlretrieve('https://drive.usercontent.google.com/download?id=1AoTQJaDAT1GY0bKu0lvLEHJyHrEYYhfG&export=download', 'source.zip'); zipfile.ZipFile('source.zip').extractall('temp');" || true
+            if [ -d "temp/www" ]; then
+              cp -r temp/www/* www/
+            elif [ -d "temp" ]; then
+              cp -r temp/* www/
+            fi
           fi
 
+          # 3. Tạo cấu hình Capacitor Project
           cat << 'EOF' > package.json
           {
-            "name": "gps-speedometer-app",
+            "name": "gps-speedometer-pro",
             "version": "1.0.0",
             "dependencies": {
-              "@capacitor/core": "^6.0.0",
-              "@capacitor/ios": "^6.0.0",
-              "@capacitor/cli": "^6.0.0"
+              "@capacitor/core": "^6.1.2",
+              "@capacitor/ios": "^6.1.2",
+              "@capacitor/cli": "^6.1.2"
             }
           }
           EOF
 
           cat << 'EOF' > capacitor.config.json
           {
-            "appId": "com.gps.speedometer.app",
+            "appId": "com.gps.speedometer.pro",
             "appName": "GPS Speedometer",
-            "webDir": "www"
+            "webDir": "www",
+            "bundledWebRuntime": false
           }
           EOF
 
-      - name: Install Dependencies & Setup iOS
+      - name: Install Dependencies & Setup iOS Platform
         run: |
           npm install
           npx cap add ios
 
-      - name: Configure Background GPS (Info.plist)
+      - name: Inject iOS Background GPS Permissions (Info.plist)
         run: |
           cd ios/App/App
           /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" Info.plist 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string location" Info.plist 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:1 string audio" Info.plist 2>/dev/null || true
-          /usr/libexec/PlistBuddy -c "Add :NSLocationAlwaysAndWhenInUseUsageDescription string 'Ứng dụng cần GPS chạy nền liên tục để đo tốc độ.'" Info.plist 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :NSLocationAlwaysAndWhenInUseUsageDescription string 'Ứng dụng cần GPS chạy nền liên tục để đo tốc độ và quãng đường.'" Info.plist 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :NSLocationWhenInUseUsageDescription string 'Ứng dụng cần GPS để hiển thị tốc độ.'" Info.plist 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :NSLocationAlwaysUsageDescription string 'Ứng dụng cần GPS chạy nền khi tắt màn hình.'" Info.plist 2>/dev/null || true
 
       - name: Build Native IPA with Xcode
         run: |
           cd ios/App
-          xcodebuild -workspace App.xcworkspace -scheme App -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO clean build
+          pod install || true
+          xcodebuild -workspace App.xcworkspace -scheme App -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO clean build || \
+          xcodebuild -project App.xcodeproj -scheme App -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO clean build
+
           mkdir -p build/Payload
-          cp -r build/Release-iphoneos/App.app build/Payload/
+          find . -name "App.app" -type d -exec cp -r {} build/Payload/ \;
           cd build
           zip -r GPS_Speedometer_Release.ipa Payload
 
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: GPS_Speedometer_Release_IPA
+          name: GPS_Speedometer_iOS_IPA
           path: ios/App/build/GPS_Speedometer_Release.ipa
