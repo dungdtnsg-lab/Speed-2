@@ -1,0 +1,76 @@
+name: Build iOS IPA Native App
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Prepare Web Assets
+        run: |
+          mkdir -p www
+          # Copy các file web vào thư mục www
+          if [ -f "index.html" ]; then
+            cp -r index.html style.css app.js sw.js manifest.json icon*.png www/ 2>/dev/null || cp -r * www/ 2>/dev/null || true
+          fi
+
+          cat << 'EOF' > package.json
+          {
+            "name": "gps-speedometer-app",
+            "version": "1.0.0",
+            "dependencies": {
+              "@capacitor/core": "^6.0.0",
+              "@capacitor/ios": "^6.0.0",
+              "@capacitor/cli": "^6.0.0"
+            }
+          }
+          EOF
+
+          cat << 'EOF' > capacitor.config.json
+          {
+            "appId": "com.gps.speedometer.app",
+            "appName": "GPS Speedometer",
+            "webDir": "www"
+          }
+          EOF
+
+      - name: Install Dependencies & Setup iOS
+        run: |
+          npm install
+          npx cap add ios
+
+      - name: Configure Background GPS (Info.plist)
+        run: |
+          cd ios/App/App
+          /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" Info.plist 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string location" Info.plist 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:1 string audio" Info.plist 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :NSLocationAlwaysAndWhenInUseUsageDescription string 'Ứng dụng cần GPS chạy nền liên tục để đo tốc độ.'" Info.plist 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :NSLocationWhenInUseUsageDescription string 'Ứng dụng cần GPS để hiển thị tốc độ.'" Info.plist 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :NSLocationAlwaysUsageDescription string 'Ứng dụng cần GPS chạy nền khi tắt màn hình.'" Info.plist 2>/dev/null || true
+
+      - name: Build Native IPA with Xcode
+        run: |
+          cd ios/App
+          xcodebuild -workspace App.xcworkspace -scheme App -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO clean build
+          mkdir -p build/Payload
+          cp -r build/Release-iphoneos/App.app build/Payload/
+          cd build
+          zip -r GPS_Speedometer_Release.ipa Payload
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GPS_Speedometer_Release_IPA
+          path: ios/App/build/GPS_Speedometer_Release.ipa
